@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FitBuddy — AI Fitness Plan Generator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🏋️ FitBuddy</h1>
+      <p>AI-powered personalized workout &amp; nutrition plans.</p>
+      {% if ai_available %}
+        <span class="badge live">● Gemini live</span>
+      {% else %}
+        <span class="badge demo">● Demo mode (offline generator — no API key needed)</span>
+      {% endif %}
+    </header>
+
+    <div class="grid">
+      <!-- Form -->
+      <form id="plan-form" class="card">
+        <h2>Your profile</h2>
+
+        <label for="name">Name</label>
+        <input id="name" name="name" value="Athlete" maxlength="60" />
+
+        <div class="row">
+          <div>
+            <label for="age">Age</label>
+            <input id="age" name="age" type="number" value="28" min="13" max="100" required />
+          </div>
+          <div>
+            <label for="sex">Sex</label>
+            <select id="sex" name="sex">
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other" selected>Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="height_cm">Height (cm)</label>
+            <input id="height_cm" name="height_cm" type="number" step="0.1" value="175" required />
+          </div>
+          <div>
+            <label for="weight_kg">Weight (kg)</label>
+            <input id="weight_kg" name="weight_kg" type="number" step="0.1" value="72" required />
+          </div>
+        </div>
+
+        <label for="goal">Goal</label>
+        <select id="goal" name="goal">
+          <option value="lose_weight">Lose weight</option>
+          <option value="build_muscle">Build muscle</option>
+          <option value="maintain" selected>Maintain fitness</option>
+          <option value="improve_endurance">Improve endurance</option>
+        </select>
+
+        <label for="activity_level">Activity level</label>
+        <select id="activity_level" name="activity_level">
+          <option value="sedentary">Sedentary</option>
+          <option value="light">Lightly active</option>
+          <option value="moderate" selected>Moderately active</option>
+          <option value="active">Active</option>
+          <option value="very_active">Very active</option>
+        </select>
+
+        <div class="row">
+          <div>
+            <label for="days_per_week">Days / week</label>
+            <input id="days_per_week" name="days_per_week" type="number" value="3" min="1" max="7" />
+          </div>
+          <div>
+            <label for="equipment">Equipment</label>
+            <select id="equipment" name="equipment">
+              <option value="none">None</option>
+              <option value="basic" selected>Basic</option>
+              <option value="full_gym">Full gym</option>
+            </select>
+          </div>
+        </div>
+
+        <label for="dietary_pref">Dietary preference</label>
+        <select id="dietary_pref" name="dietary_pref">
+          <option value="omnivore" selected>Omnivore</option>
+          <option value="vegetarian">Vegetarian</option>
+          <option value="vegan">Vegan</option>
+          <option value="pescatarian">Pescatarian</option>
+        </select>
+
+        <button type="submit" id="submit-btn">Generate plan</button>
+        <p class="note">General guidance only — not medical advice.</p>
+      </form>
+
+      <!-- Result -->
+      <div class="card result" id="result">
+        <div class="empty">
+          <div>
+            <div style="font-size:2rem">📋</div>
+            Fill in your profile and generate a plan.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("plan-form");
+    const result = document.getElementById("result");
+    const btn = document.getElementById("submit-btn");
+
+    const NUMERIC = new Set(["age", "height_cm", "weight_kg", "days_per_week"]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = "Generating…";
+      result.innerHTML = '<div class="empty">Building your plan…</div>';
+
+      const payload = {};
+      new FormData(form).forEach((value, key) => {
+        payload[key] = NUMERIC.has(key) ? Number(value) : value;
+      });
+
+      try {
+        const res = await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail ? JSON.stringify(err.detail) : "Request failed (" + res.status + ")");
+        }
+        render(await res.json());
+      } catch (err) {
+        result.innerHTML = '<div class="empty error">⚠️ ' + err.message + "</div>";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Generate plan";
+      }
+    });
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+
+    function render(data) {
+      const s = data.summary || {};
+      const w = data.workout || {};
+      const n = data.nutrition || {};
+      const m = n.macros || {};
+
+      const stats = [
+        ["Goal", s.goal ?? "—"],
+        ["BMI", s.bmi ?? "—"],
+        ["Target kcal", s.target_calories_kcal ?? "—"],
+        ["Days/week", s.days_per_week ?? "—"],
+      ].map(([k, v]) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+
+      const days = (w.days || []).map((d) => `
+        <div class="day">
+          <div class="head"><span>${esc(d.day)} · ${esc(d.focus)}</span><small>${esc(d.prescription || "")}</small></div>
+          <ul>${(d.exercises || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+        </div>`).join("");
+
+      const meals = (n.sample_day || []).map((meal) => `
+        <tr><td>${esc(meal.meal)}</td><td>${esc(meal.target_calories)} kcal</td><td>${esc(meal.idea)}</td></tr>`).join("");
+
+      result.innerHTML = `
+        <h2>Plan for ${esc(s.name || "you")}
+          <span class="pill">${data.source === "gemini" ? "Gemini" : "Demo"}${data.id ? " · #" + data.id : ""}</span>
+        </h2>
+        <div class="stats">${stats}</div>
+
+        <div class="section">
+          <h3>Weekly workout</h3>
+          <div>${(w.split || []).map((x) => `<span class="pill">${esc(x)}</span>`).join("")}</div>
+          <p class="note">${esc(w.equipment_note || "")} ${esc(w.warmup || "")}</p>
+          ${days}
+        </div>
+
+        <div class="section">
+          <h3>Nutrition</h3>
+          <div>
+            <span class="pill">${esc(n.target_calories_kcal ?? "—")} kcal/day</span>
+            <span class="pill">Protein ${esc(m.protein_g ?? "—")} g</span>
+            <span class="pill">Fat ${esc(m.fat_g ?? "—")} g</span>
+            <span class="pill">Carbs ${esc(m.carb_g ?? "—")} g</span>
+          </div>
+          <p class="note">${esc(n.hydration || "")}</p>
+          <table>
+            <thead><tr><th>Meal</th><th>Target</th><th>Idea</th></tr></thead>
+            <tbody>${meals}</tbody>
+          </table>
+        </div>
+        <p class="note">${esc(s.note || "")}</p>`;
+    }
+  </script>
+</body>
+</html>
